@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::io::stdin;
 use std::io::{Error, ErrorKind};
 
+#[derive(Copy, Clone)]
 enum InputCommandType {
     Get,
     Set,
@@ -17,42 +18,41 @@ fn get_input() -> Result<InputCommand, Error> {
     stdin().read_line(&mut input_key)?;
     let input_key = input_key.to_lowercase();
     let mut iter = input_key.split_whitespace();
-    let command = iter.next();
-    let key = iter.next();
-    let value = iter.next();
+    let command = match iter.next() {
+        Some("set") => InputCommandType::Set,
+        Some("get") => InputCommandType::Get,
+        other => {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                format!(
+                    "Could not parse command. Expected 'set' or 'get' but got '{0}'",
+                    other.unwrap_or_default()
+                ),
+            ))
+        }
+    };
 
-    match command {
-        Some("set") => match (key, value) {
-            (Some(key), Some(value)) => Ok(InputCommand {
-                command: InputCommandType::Set,
-                key: key.to_string(),
-                value: value.to_string(),
-            }),
-            (_, _) => Err(Error::new(ErrorKind::InvalidInput, "Could not parse input")),
-        },
-        Some("get") => match key {
-            Some(key) => Ok(InputCommand {
-                command: InputCommandType::Get,
-                key: key.to_string(),
-                value: value.unwrap_or_default().to_string(),
-            }),
-            None => Err(Error::new(ErrorKind::InvalidInput, "Could not parse input")),
-        },
-        _ => Err(Error::new(
-            ErrorKind::InvalidInput,
-            format!(
-                "Could not parse command. Expected 'set' or 'get' but got '{0}'",
-                command.unwrap_or_default()
-            ),
-        )),
-    }
+    let key = match iter.next() {
+        Some(v) => v.to_string(),
+        None => return Err(Error::new(ErrorKind::InvalidInput, "Could not parse input")),
+    };
+    let value = match (command, iter.next()) {
+        (InputCommandType::Set, Some(v)) => v.to_string(),
+        (InputCommandType::Get, other) => other.unwrap_or_default().to_string(),
+        (_, _) => return Err(Error::new(ErrorKind::InvalidInput, "Could not parse input")),
+    };
+
+    Ok(InputCommand {
+        command,
+        key,
+        value,
+    })
 }
 
 fn main() {
     let mut key_value_store: HashMap<String, String> = HashMap::new();
     loop {
-        let input_command = get_input();
-        let input_command = match input_command {
+        let input_command = match get_input() {
             Ok(v) => v,
             Err(error) => {
                 println!("{}\n", error);
@@ -65,7 +65,12 @@ fn main() {
                 key_value_store.insert(input_command.key, input_command.value);
             }
             InputCommandType::Get => match key_value_store.get(&input_command.key) {
-                Some(value) => println!("key:{}  value:{}\n", input_command.key, value),
+                Some(value) => {
+                    println!(
+                        "\n{{\n  key:{}  \n  value:{}\n}}\n",
+                        input_command.key, value
+                    )
+                }
                 None => println!("could not find key:{}\n", input_command.key),
             },
         };
