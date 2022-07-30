@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+// use rust_kv_store::TreeNode;
+use rust_kv_store::RBTree;
 use std::collections::HashMap;
 use std::io::stdin;
 use std::io::{Error, ErrorKind};
@@ -50,29 +53,46 @@ fn get_input() -> Result<InputCommand, Error> {
 }
 
 fn main() {
-    let mut key_value_store: HashMap<String, String> = HashMap::new();
-    loop {
-        let input_command = match get_input() {
-            Ok(v) => v,
-            Err(error) => {
-                println!("{}\n", error);
-                continue;
-            }
-        };
+    // let mut key_value_store: HashMap<String, String> = HashMap::new();
+    let mut rb_tree = RBTree::new();
+    rb_tree.insert("a".to_owned(), "value_1".to_owned());
+    // // print!("{}",rb_tree.root_node.deref());
 
-        match input_command.command {
-            InputCommandType::Set => {
-                key_value_store.insert(input_command.key, input_command.value);
-            }
-            InputCommandType::Get => match key_value_store.get(&input_command.key) {
-                Some(value) => {
-                    println!(
-                        "\n{{\n  key:{}  \n  value:{}\n}}\n",
-                        input_command.key, value
-                    )
-                }
-                None => println!("could not find key:{}\n", input_command.key),
-            },
-        };
-    }
+    rb_tree.insert(String::from("b"), "value_b".to_owned());
+    rb_tree.insert(String::from("c"), "value_c".to_owned());
+    rb_tree.insert(String::from("d"), "value_d".to_owned());
+    rb_tree.insert(String::from("e"), "value_e".to_owned());
+    rb_tree.insert(String::from("f"), "value_f".to_owned());
+    rb_tree.insert(String::from("g"), "value_g".to_owned());
+    rb_tree.insert(String::from("h"), "value_h".to_owned());
+    rb_tree.insert(String::from("i"), "value_i".to_owned());
+    rb_tree.insert(String::from("j"), "value_j".to_owned());
+    rb_tree.insert(String::from("k"), "value_k".to_owned());
+    rb_tree.print();
+    let value = rb_tree.get("d".to_owned());
+    println!("{}", value.unwrap())
+    // loop {
+    //     let input_command = match get_input() {
+    //         Ok(v) => v,
+    //         Err(error) => {
+    //             println!("{}\n", error);
+    //             continue;
+    //         }
+    //     };
+
+    //     match input_command.command {
+    //         InputCommandType::Set => {
+    //             key_value_store.insert(input_command.key, input_command.value);
+    //         }
+    //         InputCommandType::Get => match key_value_store.get(&input_command.key) {
+    //             Some(value) => {
+    //                 println!(
+    //                     "\n{{\n  key:{}  \n  value:{}\n}}\n",
+    //                     input_command.key, value
+    //                 )
+    //             }
+    //             None => println!("could not find key:{}\n", input_command.key),
+    //         },
+    //     };
+    // }
 }
