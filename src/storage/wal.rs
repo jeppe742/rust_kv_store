@@ -168,7 +168,7 @@ mod test {
 
     #[test]
     fn test_set() {
-        let path = PathBuf::from("./");
+        let path = PathBuf::from("./tests/output/1");
         let mut wal = WriteAheadLog::new(&path).unwrap();
         let entry = WALEntry::new("a".to_owned(), "b".to_owned());
         wal.set(entry).unwrap();
@@ -176,7 +176,7 @@ mod test {
 
     #[test]
     fn test_iterator() {
-        let path = PathBuf::from("./");
+        let path = PathBuf::from("./tests/output/1");
         let mut wal = WriteAheadLog::new(&path).unwrap();
         let entry = WALEntry::new("a".to_owned(), "b".to_owned());
         wal.set(entry).unwrap();
@@ -191,7 +191,7 @@ mod test {
 
     #[test]
     fn test_into_memtable() {
-        let path = PathBuf::from("./");
+        let path = PathBuf::from("./tests/output/1");
         let mut wal = WriteAheadLog::new(&path).unwrap();
         let entry = WALEntry::new("a".to_owned(), "b".to_owned());
         wal.set(entry).unwrap();
