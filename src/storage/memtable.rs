@@ -1,4 +1,3 @@
-// use super::wal::WriteAheadLog;
 use rbtree::RBTree;
 
 pub struct MemTable<K: Ord, V> {
@@ -22,9 +21,6 @@ impl<K: Ord, V> MemTable<K, V> {
             Some(value) => Some(value),
         }
     }
-    // pub fn from_wal(wal: &WriteAheadLog) -> MemTable<K, V> {
-    //     wal.iter()
-    // }
 }
 
 #[cfg(test)]
