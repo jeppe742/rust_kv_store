@@ -1,7 +1,7 @@
 use super::memtable::MemTable;
 use crc32fast;
 use std::error::Error;
-use std::fs::{File, OpenOptions};
+use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::prelude::*;
 use std::io::Write;
 use std::io::{self, BufReader, BufWriter};
@@ -63,6 +63,7 @@ impl WriteAheadLog {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_micros();
+        create_dir_all(path);
         let path = Path::new(path).join(timestamp.to_string() + ".wal");
         let file = OpenOptions::new().append(true).create(true).open(&path)?;
         let buf_writer = BufWriter::new(file);
@@ -176,7 +177,7 @@ mod test {
 
     #[test]
     fn test_iterator() {
-        let path = PathBuf::from("./tests/output/1");
+        let path = PathBuf::from("./tests/output/2");
         let mut wal = WriteAheadLog::new(&path).unwrap();
         let entry = WALEntry::new("a".to_owned(), "b".to_owned());
         wal.set(entry).unwrap();
@@ -191,7 +192,7 @@ mod test {
 
     #[test]
     fn test_into_memtable() {
-        let path = PathBuf::from("./tests/output/1");
+        let path = PathBuf::from("./tests/output/3");
         let mut wal = WriteAheadLog::new(&path).unwrap();
         let entry = WALEntry::new("a".to_owned(), "b".to_owned());
         wal.set(entry).unwrap();
