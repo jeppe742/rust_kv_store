@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::io::stdin;
 use std::io::{Error, ErrorKind};
 

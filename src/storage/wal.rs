@@ -1,6 +1,6 @@
+#![allow(dead_code)]
 use super::memtable::MemTable;
 use crc32fast;
-use std::error::Error;
 use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::prelude::*;
 use std::io::Write;

@@ -19,7 +19,7 @@
 <end_of_file>
 ```
  */
-use std::mem::size_of_val;
+
 use std::time::{SystemTime, UNIX_EPOCH};
 const BLOCKSIZE: usize = 32000;
 const USIZE_BYTES: usize = (usize::BITS / 8) as usize;
@@ -69,6 +69,9 @@ impl Block {
         let mut offset = 0;
         let mut entries = vec![];
         while offset < BLOCKSIZE {
+            if offset + USIZE_BYTES >= BLOCKSIZE {
+                break;
+            }
             let key_size =
                 usize::from_le_bytes(bytes[offset..offset + USIZE_BYTES].try_into().unwrap());
             offset += USIZE_BYTES;
@@ -207,7 +210,10 @@ impl SSTable {
 
 #[cfg(test)]
 mod test {
+    use crate::storage::memtable::MemTable;
+
     use super::*;
+    use std::mem::size_of_val;
 
     #[test]
     fn block_from_bytes() {
@@ -255,6 +261,24 @@ mod test {
         assert_eq!(
             Some(&"bb1".to_owned()),
             new_sstable.get_value(&"b1".to_owned())
+        )
+    }
+
+    #[test]
+    fn from_memtable_bytes() {
+        let mut mem_table = MemTable::new();
+        for i in 0..(BLOCKSIZE / 4) {
+            mem_table.insert(
+                format!("{}{}", "a".to_owned(), i.to_string()),
+                format!("{}{}", "aa".to_owned(), i.to_string()),
+            );
+        }
+
+        let bytes = mem_table.to_bytes_padded();
+        let new_sstable = SSTable::from_bytes(&bytes);
+        assert_eq!(
+            Some(&"aa3000".to_owned()),
+            new_sstable.get_value(&"a3000".to_owned())
         )
     }
 }

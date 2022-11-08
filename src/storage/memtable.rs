@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use rbtree::RBTree;
 
 pub struct MemTable<K: Ord, V> {
@@ -20,6 +22,33 @@ impl<K: Ord, V> MemTable<K, V> {
             None => None,
             Some(value) => Some(value),
         }
+    }
+}
+const BLOCKSIZE: usize = 32000;
+impl MemTable<String, String> {
+    pub fn to_bytes_padded(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        let mut buffer_size = 0;
+        for (key, value) in self._storage.iter() {
+            if buffer_size + key.len() + value.len() + 2 * 8 + 16 > BLOCKSIZE {
+                let padding = vec![0; BLOCKSIZE - buffer_size];
+                bytes.extend(padding);
+                buffer_size = 0;
+            }
+
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            bytes.extend(key.len().to_le_bytes().to_vec());
+            bytes.extend(value.len().to_le_bytes().to_vec());
+            bytes.extend(timestamp.to_le_bytes().to_vec());
+            bytes.extend(key.as_bytes().to_vec());
+            bytes.extend(value.as_bytes().to_vec());
+
+            buffer_size += key.len() + value.len() + 2 * 8 + 16;
+        }
+        bytes
     }
 }
 
