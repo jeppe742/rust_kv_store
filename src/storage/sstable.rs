@@ -20,7 +20,14 @@
 ```
  */
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    fs::{create_dir_all, File, OpenOptions},
+    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    mem::size_of_val,
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+    vec,
+};
 const BLOCKSIZE: usize = 32000;
 const USIZE_BYTES: usize = (usize::BITS / 8) as usize;
 const U128_BYTES: usize = (u128::BITS / 8) as usize;
@@ -76,7 +83,7 @@ impl Block {
                 usize::from_le_bytes(bytes[offset..offset + USIZE_BYTES].try_into().unwrap());
             offset += USIZE_BYTES;
 
-            // we have reatched the end of data in the block.
+            // we have reached the end of data in the block.
             // The rest is padded with /0 and will have key_size 0
             if key_size == 0 {
                 break;
@@ -128,10 +135,19 @@ impl Block {
             Err(_) => None,
         }
     }
+
+    pub fn get_value_cloned(&self, key: &String) -> Option<String> {
+        let i = self.entries.binary_search_by_key(&key, |e| &e.key);
+        match i {
+            Ok(idx) => Some(self.entries.get(idx).unwrap().value.clone()),
+            Err(_) => None,
+        }
+    }
 }
 
 struct IndexEntry {
     key: String,
+    offset: usize,
     block_index: usize,
 }
 struct IndexBlock {
@@ -146,15 +162,46 @@ impl IndexBlock {
             Err(v) => v - 1,
         }
     }
+    fn get_block_offset(&self, key: &String) -> usize {
+        // index = |a|b|d|f, key = c  -> 1
+        match self.entries.binary_search_by_key(&key, |e| &e.key) {
+            Ok(v) => self.entries.get(v).unwrap().offset,
+            Err(v) => self.entries.get(v - 1).unwrap().offset,
+        }
+    }
     fn new() -> IndexBlock {
         IndexBlock { entries: vec![] }
+    }
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        for index in self.entries.iter() {
+            bytes.extend(index.key.len().to_le_bytes().to_vec());
+            bytes.extend(index.key.as_bytes().to_vec());
+            bytes.extend(index.offset.to_le_bytes().to_vec());
+            bytes.extend(index.block_index.to_le_bytes().to_vec());
+        }
+        bytes
+    }
+}
+
+struct Footer {
+    index_offset: usize,
+    index_size: usize,
+}
+
+impl Footer {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.extend(self.index_offset.to_le_bytes().to_vec());
+        bytes.extend(self.index_size.to_le_bytes().to_vec());
+        bytes
     }
 }
 
 struct SSTable {
     data_blocks: Vec<Block>,
     index_block: IndexBlock,
-    crc: u32, // CRC = 32bit hash computed over the payload using CRC
+    footer: Footer,
 }
 
 impl SSTable {
@@ -165,6 +212,7 @@ impl SSTable {
 
     pub fn from_bytes(bytes: &[u8]) -> SSTable {
         let mut offset = 0;
+        let mut block_offset = 0;
         let input_size = bytes.len();
         let mut data_blocks = vec![];
         let mut index_block = IndexBlock::new();
@@ -176,14 +224,30 @@ impl SSTable {
 
             index_block.entries.push(IndexEntry {
                 key: min_key,
+                offset: block_offset,
                 block_index: block_idx,
-            })
-        }
+            });
 
+            block_offset += BLOCKSIZE;
+        }
+        let sizes: Vec<usize> = index_block
+            .entries
+            .iter()
+            .map(|x| x.key.len() + 24)
+            .collect();
+        let footer = Footer {
+            index_offset: data_blocks.len() * BLOCKSIZE,
+            index_size: index_block
+                .entries
+                .iter()
+                .map(|x| x.key.len() + 24)
+                .sum::<usize>(),
+        };
+        // let index_size = size_of_val(&index_block);
         SSTable {
             data_blocks,
             index_block,
-            crc: 123,
+            footer,
         }
     }
 
@@ -196,15 +260,111 @@ impl SSTable {
             let min_key = block.entries.get(0).unwrap().key.clone();
             index_block.entries.push(IndexEntry {
                 key: min_key,
+                offset: i * BLOCKSIZE,
                 block_index: i,
             })
         }
-
+        let footer = Footer {
+            index_offset: size_of_val(&data_blocks) + size_of_val(&index_block),
+            index_size: size_of_val(&index_block),
+        };
         SSTable {
             data_blocks,
             index_block,
-            crc: 123,
+            footer,
         }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        for block in self.data_blocks.iter() {
+            bytes.extend(block.to_bytes());
+        }
+        bytes.extend(self.index_block.to_bytes());
+        bytes.extend(self.footer.to_bytes());
+
+        bytes
+    }
+
+    pub fn write(&self, path: &Path) {
+        create_dir_all(path.parent().unwrap());
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let mut buf_writer = BufWriter::new(file);
+        buf_writer.write_all(&self.to_bytes());
+    }
+
+    pub fn get_disk(input_key: &String, file_path: &Path) -> Option<String> {
+        let mut file = File::open(file_path).unwrap();
+        file.seek(SeekFrom::End(-16)).unwrap();
+
+        let mut footer_buffer = [0; 16];
+        if let Err(err) = file.read_exact(&mut footer_buffer) {
+            print!("{}", err);
+        };
+        let footer = Footer {
+            index_offset: usize::from_le_bytes(footer_buffer[0..8].try_into().unwrap()),
+            index_size: usize::from_le_bytes(footer_buffer[8..16].try_into().unwrap()),
+        };
+
+        file.seek(SeekFrom::Start(footer.index_offset.try_into().unwrap()));
+
+        let mut index_buffer = vec![0; footer.index_size];
+        file.read_exact(&mut index_buffer);
+
+        let mut index_entries = vec![];
+        let mut index_offset = 0;
+        while index_offset < footer.index_size {
+            let key_size = usize::from_le_bytes(
+                index_buffer[index_offset..index_offset + 8]
+                    .try_into()
+                    .unwrap(),
+            );
+            index_offset += 8;
+            let key = String::from_utf8_lossy(
+                index_buffer[index_offset..index_offset + key_size]
+                    .try_into()
+                    .unwrap(),
+            )
+            .to_string();
+            index_offset += key_size;
+
+            let offset = usize::from_le_bytes(
+                index_buffer[index_offset..index_offset + 8]
+                    .try_into()
+                    .unwrap(),
+            );
+            index_offset += 8;
+
+            let block_index = usize::from_le_bytes(
+                index_buffer[index_offset..index_offset + 8]
+                    .try_into()
+                    .unwrap(),
+            );
+            index_offset += 8;
+
+            index_entries.push(IndexEntry {
+                key,
+                offset,
+                block_index,
+            })
+        }
+
+        let index_block = IndexBlock {
+            entries: index_entries,
+        };
+
+        let block_offset = index_block.get_block_offset(input_key);
+
+        let mut block_buffer = [0; BLOCKSIZE];
+        file.seek(SeekFrom::Start(block_offset.try_into().unwrap()));
+        file.read_exact(&mut block_buffer);
+
+        let block = Block::from_bytes(&block_buffer);
+        block.get_value_cloned(input_key)
     }
 }
 
@@ -279,6 +439,34 @@ mod test {
         assert_eq!(
             Some(&"aa3000".to_owned()),
             new_sstable.get_value(&"a3000".to_owned())
-        )
+        );
+        let path = Path::new("db.ss");
+        new_sstable.write(&path);
+    }
+
+    #[test]
+    fn get_from_disk() {
+        let mut mem_table = MemTable::new();
+        for i in 0..(BLOCKSIZE / 5) {
+            mem_table.insert(
+                format!("{}{}", "a".to_owned(), i.to_string()),
+                format!("{}{}", "aa".to_owned(), i.to_string()),
+            );
+        }
+
+        let bytes = mem_table.to_bytes_padded();
+        let new_sstable = SSTable::from_bytes(&bytes);
+
+        let path = Path::new("./tests/outputt/db2.ss");
+        new_sstable.write(&path);
+        assert_eq!(
+            SSTable::get_disk(&"a3000".to_owned(), &path),
+            Some("aa3000".to_owned())
+        );
+
+        assert_eq!(
+            SSTable::get_disk(&"a4001".to_owned(), &path),
+            Some("aa4001".to_owned())
+        );
     }
 }
