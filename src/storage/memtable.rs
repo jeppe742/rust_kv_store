@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rbtree::RBTree;
@@ -22,6 +23,10 @@ impl<K: Ord, V: Clone> MemTable<K, V> {
             None => None,
             Some(value) => Some(value.to_owned()),
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self._storage.len()
     }
 }
 const BLOCKSIZE: usize = 32000;

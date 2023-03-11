@@ -22,9 +22,9 @@
 
 use std::{
     fs::{create_dir_all, File, OpenOptions},
-    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    io::{BufWriter, Read, Seek, SeekFrom, Write},
     mem::size_of_val,
-    path::Path,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
     vec,
 };
@@ -166,6 +166,7 @@ impl IndexBlock {
         // index = |a|b|d|f, key = c  -> 1
         match self.entries.binary_search_by_key(&key, |e| &e.key) {
             Ok(v) => self.entries.get(v).unwrap().offset,
+            Err(v) if v == 0 => self.entries.get(v).unwrap().offset,
             Err(v) => self.entries.get(v - 1).unwrap().offset,
         }
     }
@@ -230,11 +231,7 @@ impl SSTable {
 
             block_offset += BLOCKSIZE;
         }
-        let sizes: Vec<usize> = index_block
-            .entries
-            .iter()
-            .map(|x| x.key.len() + 24)
-            .collect();
+
         let footer = Footer {
             index_offset: data_blocks.len() * BLOCKSIZE,
             index_size: index_block
@@ -286,18 +283,28 @@ impl SSTable {
         bytes
     }
 
-    pub fn write(&self, path: &Path) {
-        create_dir_all(path.parent().unwrap());
+    pub fn write(&self, path: &Path) -> Result<PathBuf, std::io::Error> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_micros();
+        create_dir_all(path)?;
+        let path = Path::new(path).join(timestamp.to_string() + ".ss");
+
         let file = OpenOptions::new()
             .create(true)
             .write(true)
             .open(&path)
             .unwrap();
         let mut buf_writer = BufWriter::new(file);
-        buf_writer.write_all(&self.to_bytes());
+        buf_writer.write_all(&self.to_bytes())?;
+        Ok(path)
     }
 
-    pub fn get_disk(input_key: &String, file_path: &Path) -> Option<String> {
+    pub fn get_disk(
+        input_key: &String,
+        file_path: &Path,
+    ) -> Result<Option<String>, std::io::Error> {
         let mut file = File::open(file_path).unwrap();
         file.seek(SeekFrom::End(-16)).unwrap();
 
@@ -310,10 +317,10 @@ impl SSTable {
             index_size: usize::from_le_bytes(footer_buffer[8..16].try_into().unwrap()),
         };
 
-        file.seek(SeekFrom::Start(footer.index_offset.try_into().unwrap()));
+        file.seek(SeekFrom::Start(footer.index_offset.try_into().unwrap()))?;
 
         let mut index_buffer = vec![0; footer.index_size];
-        file.read_exact(&mut index_buffer);
+        file.read_exact(&mut index_buffer)?;
 
         let mut index_entries = vec![];
         let mut index_offset = 0;
@@ -360,11 +367,12 @@ impl SSTable {
         let block_offset = index_block.get_block_offset(input_key);
 
         let mut block_buffer = [0; BLOCKSIZE];
-        file.seek(SeekFrom::Start(block_offset.try_into().unwrap()));
-        file.read_exact(&mut block_buffer);
+        file.seek(SeekFrom::Start(block_offset.try_into().unwrap()))?;
+        file.read_exact(&mut block_buffer)?;
 
         let block = Block::from_bytes(&block_buffer);
-        block.get_value_cloned(input_key)
+        // TODO: Result<Option<>> is kind of ugly
+        Ok(block.get_value_cloned(input_key))
     }
 }
 
@@ -373,7 +381,7 @@ mod test {
     use crate::storage::memtable::MemTable;
 
     use super::*;
-    use std::mem::size_of_val;
+    use std::{fs::remove_dir_all, mem::size_of_val};
 
     #[test]
     fn block_from_bytes() {
@@ -440,8 +448,6 @@ mod test {
             Some(&"aa3000".to_owned()),
             new_sstable.get_value(&"a3000".to_owned())
         );
-        let path = Path::new("db.ss");
-        new_sstable.write(&path);
     }
 
     #[test]
@@ -457,16 +463,17 @@ mod test {
         let bytes = mem_table.to_bytes_padded();
         let new_sstable = SSTable::from_bytes(&bytes);
 
-        let path = Path::new("./tests/sstable/output/db2.ss");
-        new_sstable.write(&path);
+        let path = Path::new("./tests/sstable/output/get_from_disk");
+        let ss_path = new_sstable.write(&path).unwrap();
         assert_eq!(
-            SSTable::get_disk(&"a3000".to_owned(), &path),
+            SSTable::get_disk(&"a3000".to_owned(), &ss_path).unwrap(),
             Some("aa3000".to_owned())
         );
 
         assert_eq!(
-            SSTable::get_disk(&"a4001".to_owned(), &path),
+            SSTable::get_disk(&"a4001".to_owned(), &ss_path).unwrap(),
             Some("aa4001".to_owned())
         );
+        remove_dir_all(path).unwrap();
     }
 }

@@ -63,7 +63,7 @@ impl WriteAheadLog {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_micros();
-        create_dir_all(path);
+        create_dir_all(path)?;
         let path = Path::new(path).join(timestamp.to_string() + ".wal");
         let file = OpenOptions::new().append(true).create(true).open(&path)?;
         let buf_writer = BufWriter::new(file);
@@ -177,20 +177,20 @@ impl Iterator for WriteAheadLogIter {
 
 #[cfg(test)]
 mod test {
-    use std::fs;
+    use std::fs::remove_dir_all;
 
     use super::*;
 
     #[test]
-    fn test_set() {
-        let path = PathBuf::from("./tests/wal/output/1");
+    fn set() {
+        let path = PathBuf::from("./tests/wal/output/set");
         let mut wal = WriteAheadLog::new(&path).unwrap();
         wal.set("a".to_owned(), "b".to_owned()).unwrap();
     }
 
     #[test]
-    fn test_iterator() {
-        let path = PathBuf::from("./tests/wal/output/2");
+    fn iterator() {
+        let path = PathBuf::from("./tests/wal/output/iterator");
         let mut wal = WriteAheadLog::new(&path).unwrap();
         wal.set("a".to_owned(), "b".to_owned()).unwrap();
 
@@ -203,13 +203,14 @@ mod test {
     }
 
     #[test]
-    fn test_into_memtable() {
-        let path = PathBuf::from("./tests/wal/output/3");
+    fn into_memtable() {
+        let path = PathBuf::from("./tests/wal/output/into_memtable");
         let mut wal = WriteAheadLog::new(&path).unwrap();
         wal.set("a".to_owned(), "b".to_owned()).unwrap();
 
         let mem_table = wal.into_memtable();
 
-        assert_eq!(mem_table.get(&"a".to_owned()), Some("b".to_owned()))
+        assert_eq!(mem_table.get(&"a".to_owned()), Some("b".to_owned()));
+        remove_dir_all(path).unwrap();
     }
 }
