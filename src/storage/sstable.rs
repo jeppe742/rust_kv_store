@@ -67,7 +67,7 @@ impl PartialEq for Entry {
     }
 }
 
-struct Block {
+pub struct Block {
     /**/
     entries: Vec<Entry>,
 }
@@ -198,7 +198,7 @@ impl Footer {
     }
 }
 
-struct SSTable {
+pub struct SSTable {
     data_blocks: Vec<Block>,
     index_block: IndexBlock,
     footer: Footer,
@@ -428,7 +428,7 @@ mod test {
     fn from_memtable_bytes() {
         let mut mem_table = MemTable::new();
         for i in 0..(BLOCKSIZE / 4) {
-            mem_table.insert(
+            mem_table.set(
                 format!("{}{}", "a".to_owned(), i.to_string()),
                 format!("{}{}", "aa".to_owned(), i.to_string()),
             );
@@ -448,7 +448,7 @@ mod test {
     fn get_from_disk() {
         let mut mem_table = MemTable::new();
         for i in 0..(BLOCKSIZE / 5) {
-            mem_table.insert(
+            mem_table.set(
                 format!("{}{}", "a".to_owned(), i.to_string()),
                 format!("{}{}", "aa".to_owned(), i.to_string()),
             );
@@ -457,7 +457,7 @@ mod test {
         let bytes = mem_table.to_bytes_padded();
         let new_sstable = SSTable::from_bytes(&bytes);
 
-        let path = Path::new("./tests/outputt/db2.ss");
+        let path = Path::new("./tests/sstable/output/db2.ss");
         new_sstable.write(&path);
         assert_eq!(
             SSTable::get_disk(&"a3000".to_owned(), &path),

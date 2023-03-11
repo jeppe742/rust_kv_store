@@ -10,13 +10,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const BLOCKSIZE: u16 = 32000;
 
-struct WALEntry {
+pub struct WALEntry {
     crc: u32, // CRC = 32bit hash computed over the payload using CRC
     key_size: usize,
     value_size: usize,
     timestamp: u128,
-    key: String,
-    value: String,
+    pub key: String,
+    pub value: String,
 }
 
 impl WALEntry {
@@ -52,7 +52,7 @@ struct WALBlock {
     entries: Vec<WALEntry>,
 }
 
-struct WriteAheadLog {
+pub struct WriteAheadLog {
     path: PathBuf,
     buf_writer: BufWriter<File>,
 }
@@ -71,22 +71,34 @@ impl WriteAheadLog {
         Ok(WriteAheadLog { path, buf_writer })
     }
 
-    fn set(&mut self, entry: WALEntry) -> io::Result<()> {
+    pub fn from_file(path: &Path) -> io::Result<WriteAheadLog> {
+        let file = OpenOptions::new().append(true).open(&path)?;
+        let buf_writer = BufWriter::new(file);
+
+        Ok(WriteAheadLog {
+            path: path.to_path_buf(),
+            buf_writer,
+        })
+    }
+
+    pub fn set(&mut self, key: String, value: String) -> io::Result<()> {
+        let entry = WALEntry::new(key, value);
         self.buf_writer.write_all(&entry.as_bytes()).unwrap();
-        self.buf_writer.flush()
+        self.buf_writer.flush().unwrap();
+        Ok(())
     }
 
     pub fn into_memtable(self) -> MemTable<String, String> {
         let mut mem_table = MemTable::new();
         for wal_entry in self.into_iter() {
-            mem_table.insert(wal_entry.key, wal_entry.value)
+            mem_table.set(wal_entry.key, wal_entry.value)
         }
 
         mem_table
     }
 }
 
-struct WriteAheadLogIter {
+pub struct WriteAheadLogIter {
     buf_reader: BufReader<File>,
 }
 
@@ -165,22 +177,22 @@ impl Iterator for WriteAheadLogIter {
 
 #[cfg(test)]
 mod test {
+    use std::fs;
+
     use super::*;
 
     #[test]
     fn test_set() {
-        let path = PathBuf::from("./tests/output/1");
+        let path = PathBuf::from("./tests/wal/output/1");
         let mut wal = WriteAheadLog::new(&path).unwrap();
-        let entry = WALEntry::new("a".to_owned(), "b".to_owned());
-        wal.set(entry).unwrap();
+        wal.set("a".to_owned(), "b".to_owned()).unwrap();
     }
 
     #[test]
     fn test_iterator() {
-        let path = PathBuf::from("./tests/output/2");
+        let path = PathBuf::from("./tests/wal/output/2");
         let mut wal = WriteAheadLog::new(&path).unwrap();
-        let entry = WALEntry::new("a".to_owned(), "b".to_owned());
-        wal.set(entry).unwrap();
+        wal.set("a".to_owned(), "b".to_owned()).unwrap();
 
         let mut wal_iter = wal.into_iter();
         let read_entry = wal_iter.next().unwrap();
@@ -192,13 +204,12 @@ mod test {
 
     #[test]
     fn test_into_memtable() {
-        let path = PathBuf::from("./tests/output/3");
+        let path = PathBuf::from("./tests/wal/output/3");
         let mut wal = WriteAheadLog::new(&path).unwrap();
-        let entry = WALEntry::new("a".to_owned(), "b".to_owned());
-        wal.set(entry).unwrap();
+        wal.set("a".to_owned(), "b".to_owned()).unwrap();
 
         let mem_table = wal.into_memtable();
 
-        assert_eq!(mem_table.get(&"a".to_owned()), Some(&"b".to_owned()))
+        assert_eq!(mem_table.get(&"a".to_owned()), Some("b".to_owned()))
     }
 }
