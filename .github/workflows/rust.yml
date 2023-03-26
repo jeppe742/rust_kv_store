@@ -22,3 +22,9 @@ jobs:
       run: cargo test --verbose
     - name: Benchmarks
       run: cargo bench
+
+    - name: Archive benchmark results
+        uses: actions/upload-artifact@v3
+        with:
+          name: criterion-benchmarks
+          path: target/criterion
