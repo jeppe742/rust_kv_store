@@ -20,8 +20,18 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("read", |b| {
-        b.iter(|| black_box(db.get(&rng.gen::<u32>().to_string())))
+    group.bench_function("get un-matched", |b| {
+        b.iter(|| black_box(db.get(&"b".to_string())))
+    });
+
+    db.set("a".to_string(), "b".to_string()).unwrap();
+    group.bench_function("get matched - in memtable", |b| {
+        b.iter(|| black_box(db.get(&"a".to_string())))
+    });
+
+    let db = DB::new(&path);
+    group.bench_function("get matched - disk", |b| {
+        b.iter(|| black_box(db.get(&"a".to_string())))
     });
 
     remove_dir_all(path).unwrap();
