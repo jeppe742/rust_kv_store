@@ -24,7 +24,7 @@ jobs:
       run: cargo bench
 
     - name: Archive benchmark results
-        uses: actions/upload-artifact@v3
-        with:
-          name: criterion-benchmarks
-          path: target/criterion
+      uses: actions/upload-artifact@v3
+      with:
+        name: criterion-benchmarks
+        path: target/criterion
