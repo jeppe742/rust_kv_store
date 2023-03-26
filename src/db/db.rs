@@ -13,7 +13,7 @@ use glob::glob;
 enum DBConfig {
     MemtableSize,
 }
-struct DB {
+pub struct DB {
     root_path: PathBuf,
     wal: WriteAheadLog,
     mem_table: MemTable<String, String>,
@@ -39,7 +39,7 @@ impl DB {
         }
     }
 
-    pub fn set_config(&mut self, config: DBConfig, value: usize) {
+    fn set_config(&mut self, config: DBConfig, value: usize) {
         self.config.insert(config, value);
     }
 

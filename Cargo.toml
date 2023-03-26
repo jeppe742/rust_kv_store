@@ -3,6 +3,8 @@ name = "rust_kv_store"
 version = "0.1.0"
 edition = "2021"
 
+[registries.crates-io]
+protocol = "sparse"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -10,3 +12,13 @@ rbtree = "0"
 #tokio = { version = "1", features = ["full"] }
 crc32fast = "1.3.2"
 glob = "0.3.0"
+
+
+
+[dev-dependencies]
+criterion = {version = "0.4.0", features = ["html_reports"] }
+rand = "0.8.5"
+
+[[bench]]
+name = "benchmark"
+harness = false
