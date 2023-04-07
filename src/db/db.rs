@@ -7,7 +7,7 @@ use crate::storage::memtable::MemTable;
 use crate::storage::sstable::SSTable;
 use crate::storage::wal::WriteAheadLog;
 
-use glob::glob;
+use glob::{glob, GlobResult};
 
 #[derive(Hash, PartialEq, Eq)]
 enum DBConfig {
@@ -16,7 +16,7 @@ enum DBConfig {
 pub struct DB {
     root_path: PathBuf,
     wal: WriteAheadLog,
-    mem_table: MemTable<String, String>,
+    mem_table: MemTable,
     sstable_path: PathBuf,
     wal_path: PathBuf,
     config: HashMap<DBConfig, usize>,
@@ -44,22 +44,15 @@ impl DB {
     }
 
     pub fn restore_wal(&mut self) {
-        let mut mem_table = MemTable::new();
         let s = self.wal_path.join("*.wal").to_str().unwrap().to_string();
-        for wal_entry in glob(&s).unwrap() {
-            match wal_entry {
-                Ok(wal_path) => {
-                    let wal = WriteAheadLog::from_file(&wal_path).unwrap();
-                    for wal_entry in wal.into_iter() {
-                        mem_table.set(wal_entry.key, wal_entry.value)
-                    }
-                }
-                Err(_) => todo!(),
+        let mem_table = match glob(&s).unwrap().next() {
+            Some(GlobResult::Ok(wal_path)) => {
+                let wal = WriteAheadLog::from_file(&wal_path).unwrap();
+                wal.into_memtable()
             }
-        }
+            _ => unreachable!(),
+        };
 
-        // mem_table
-        // let mem_table = self.wal.into_memtable();
         self.mem_table = mem_table;
     }
     pub fn get(&self, key: &String) -> Option<String> {
@@ -67,7 +60,7 @@ impl DB {
             return Some(v);
         }
 
-        for ss_table in glob(&self.sstable_path.join("*.ss").to_str().unwrap())
+        for ss_table in glob(self.sstable_path.join("*.ss").to_str().unwrap())
             .unwrap()
             .filter_map(Result::ok)
             .collect::<Vec<PathBuf>>()
@@ -97,7 +90,28 @@ impl DB {
             new_sstable.write(&self.sstable_path).unwrap();
 
             self.mem_table = MemTable::new();
-            self.wal = WriteAheadLog::new(&&self.root_path.join("wal")).unwrap();
+            self.wal = WriteAheadLog::new(&self.root_path.join("wal")).unwrap();
+        }
+
+        Ok(())
+    }
+
+    pub fn delete(&mut self, key: String) -> Result<(), io::Error> {
+        let res = self.wal.delete(key.clone());
+        match res {
+            Ok(_) => {
+                self.mem_table.delete(key);
+            }
+            Err(e) => return Err(e),
+        }
+
+        if self.mem_table.len() == *self.config.get(&DBConfig::MemtableSize).unwrap() {
+            let new_sstable = SSTable::from_records(self.mem_table.to_records());
+
+            new_sstable.write(&self.sstable_path).unwrap();
+
+            self.mem_table = MemTable::new();
+            self.wal = WriteAheadLog::new(&self.root_path.join("wal")).unwrap();
         }
 
         Ok(())
@@ -119,6 +133,22 @@ mod test {
         db.set("a".to_owned(), "b".to_owned()).unwrap();
 
         assert_eq!(db.get(&"a".to_owned()), Some("b".to_owned()));
+        remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn delete() {
+        let path = PathBuf::from("./tests/db/output/delete");
+
+        let mut db = DB::new(&path);
+        db.set("a".to_owned(), "b".to_owned()).unwrap();
+
+        assert_eq!(db.get(&"a".to_owned()), Some("b".to_owned()));
+
+        db.delete("a".to_owned()).unwrap();
+
+        assert_eq!(db.get(&"a".to_owned()), None);
+
         remove_dir_all(path).unwrap();
     }
 
