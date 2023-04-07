@@ -92,8 +92,7 @@ impl DB {
         }
 
         if self.mem_table.len() == *self.config.get(&DBConfig::MemtableSize).unwrap() {
-            let bytes = self.mem_table.to_bytes_padded();
-            let new_sstable = SSTable::from_bytes(&bytes);
+            let new_sstable = SSTable::from_records(self.mem_table.to_records());
 
             new_sstable.write(&self.sstable_path).unwrap();
 

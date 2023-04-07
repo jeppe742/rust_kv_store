@@ -3,6 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rbtree::RBTree;
 
+use super::record::Record;
+
 pub struct MemTable<K: Ord, V> {
     _storage: RBTree<K, V>,
 }
@@ -54,6 +56,12 @@ impl MemTable<String, String> {
             buffer_size += key.len() + value.len() + 2 * 8 + 16;
         }
         bytes
+    }
+    pub fn to_records(&self) -> Vec<Record> {
+        self._storage
+            .iter()
+            .map(|(k, v)| Record::new(k.to_string(), v.to_string()))
+            .collect()
     }
 }
 
