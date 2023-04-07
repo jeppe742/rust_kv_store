@@ -23,53 +23,18 @@
 use std::{
     fs::{create_dir_all, File, OpenOptions},
     io::{BufWriter, Read, Seek, SeekFrom, Write},
-    mem::size_of_val,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
     vec,
 };
+
+use super::record::Record;
 const BLOCKSIZE: usize = 32000;
 const USIZE_BYTES: usize = (usize::BITS / 8) as usize;
 const U128_BYTES: usize = (u128::BITS / 8) as usize;
 
-#[derive(Debug)]
-struct Entry {
-    key_size: usize,
-    value_size: usize,
-    timestamp: u128,
-    key: String,
-    value: String,
-}
-
-impl Entry {
-    pub fn new(key: String, value: String) -> Entry {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        Entry {
-            key_size: key.len(),
-            value_size: value.len(),
-            timestamp,
-            key,
-            value,
-        }
-    }
-}
-
-impl PartialEq for Entry {
-    fn eq(&self, other: &Self) -> bool {
-        self.key_size == other.key_size
-            && self.value_size == other.value_size
-            && self.timestamp == other.timestamp
-            && self.key == other.key
-            && self.value == other.value
-    }
-}
-
 pub struct Block {
-    /**/
-    entries: Vec<Entry>,
+    records: Vec<Record>,
 }
 impl Block {
     pub fn from_bytes(bytes: &[u8; BLOCKSIZE]) -> Block {
@@ -102,44 +67,37 @@ impl Block {
             let value = String::from_utf8_lossy(&bytes[offset..offset + value_size]).into_owned();
             offset += value_size;
 
-            let entry = Entry {
-                key_size,
-                value_size,
+            let entry = Record {
                 timestamp,
                 key,
                 value,
             };
             entries.push(entry);
         }
-        Block { entries: entries }
+        Block { records: entries }
     }
 
     pub fn to_bytes(&self) -> [u8; BLOCKSIZE] {
-        let mut bytes = vec![];
+        let mut bytes: Vec<u8> = self.records.iter().flat_map(|r| r.as_bytes()).collect();
 
-        for entry in &self.entries {
-            bytes.extend(entry.key_size.to_le_bytes());
-            bytes.extend(entry.value_size.to_le_bytes().to_vec());
-            bytes.extend(entry.timestamp.to_le_bytes().to_vec());
-            bytes.extend(entry.key.as_bytes().to_vec());
-            bytes.extend(entry.value.as_bytes().to_vec());
-        }
+        // pad bytes with 0 to a fixed size of BLOCKSIZE
         bytes.resize(BLOCKSIZE, 0);
+
         bytes.try_into().unwrap()
     }
 
     pub fn get_value(&self, key: &String) -> Option<&String> {
-        let i = self.entries.binary_search_by_key(&key, |e| &e.key);
+        let i = self.records.binary_search_by_key(&key, |e| &e.key);
         match i {
-            Ok(idx) => Some(&self.entries.get(idx).unwrap().value),
+            Ok(idx) => Some(&self.records.get(idx).unwrap().value),
             Err(_) => None,
         }
     }
 
     pub fn get_value_cloned(&self, key: &String) -> Option<String> {
-        let i = self.entries.binary_search_by_key(&key, |e| &e.key);
+        let i = self.records.binary_search_by_key(&key, |e| &e.key);
         match i {
-            Ok(idx) => Some(self.entries.get(idx).unwrap().value.clone()),
+            Ok(idx) => Some(self.records.get(idx).unwrap().value.clone()),
             Err(_) => None,
         }
     }
@@ -211,25 +169,47 @@ impl SSTable {
         self.data_blocks.get(block_idx).unwrap().get_value(key)
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> SSTable {
+    pub fn from_records(records: Vec<Record>) -> Self {
         let mut offset = 0;
-        let mut block_offset = 0;
-        let input_size = bytes.len();
         let mut data_blocks = vec![];
+        let mut current_block = 0;
+        let mut block_records: Vec<Record> = vec![];
         let mut index_block = IndexBlock::new();
-        for block_idx in 0..(input_size / BLOCKSIZE) {
-            let block = Block::from_bytes(bytes[offset..offset + BLOCKSIZE].try_into().unwrap());
-            let min_key = block.entries.get(0).unwrap().key.to_string();
-            data_blocks.push(block);
-            offset += BLOCKSIZE;
 
+        for record in records {
+            if offset + record.size() > BLOCKSIZE {
+                let min_key = block_records.get(0).unwrap().key.to_string();
+                index_block.entries.push(IndexEntry {
+                    key: min_key,
+                    offset: BLOCKSIZE * current_block,
+                    block_index: current_block,
+                });
+
+                let block = Block {
+                    records: block_records,
+                };
+                data_blocks.push(block);
+                offset = 0;
+                current_block += 1;
+                block_records = vec![];
+            }
+            offset += record.size();
+            block_records.push(record);
+        }
+
+        // dump remaining records into block, with index
+        if !block_records.is_empty() {
+            let min_key = block_records.get(0).unwrap().key.to_string();
             index_block.entries.push(IndexEntry {
                 key: min_key,
-                offset: block_offset,
-                block_index: block_idx,
+                offset: BLOCKSIZE * current_block,
+                block_index: current_block,
             });
 
-            block_offset += BLOCKSIZE;
+            let block = Block {
+                records: block_records,
+            };
+            data_blocks.push(block);
         }
 
         let footer = Footer {
@@ -237,34 +217,10 @@ impl SSTable {
             index_size: index_block
                 .entries
                 .iter()
-                .map(|x| x.key.len() + 24)
+                .map(|x| x.key.len() + 3 * USIZE_BYTES)
                 .sum::<usize>(),
         };
-        // let index_size = size_of_val(&index_block);
-        SSTable {
-            data_blocks,
-            index_block,
-            footer,
-        }
-    }
 
-    pub fn from_blocks(blocks: Vec<Block>) -> SSTable {
-        let mut data_blocks = vec![];
-        let mut index_block = IndexBlock::new();
-        for (i, block) in blocks.into_iter().enumerate() {
-            let bytes = block.to_bytes();
-            data_blocks.push(Block::from_bytes(&bytes));
-            let min_key = block.entries.get(0).unwrap().key.clone();
-            index_block.entries.push(IndexEntry {
-                key: min_key,
-                offset: i * BLOCKSIZE,
-                block_index: i,
-            })
-        }
-        let footer = Footer {
-            index_offset: size_of_val(&data_blocks) + size_of_val(&index_block),
-            index_size: size_of_val(&index_block),
-        };
         SSTable {
             data_blocks,
             index_block,
@@ -306,15 +262,19 @@ impl SSTable {
         file_path: &Path,
     ) -> Result<Option<String>, std::io::Error> {
         let mut file = File::open(file_path).unwrap();
-        file.seek(SeekFrom::End(-16)).unwrap();
+        file.seek(SeekFrom::End(-(2 * USIZE_BYTES as i64))).unwrap();
 
-        let mut footer_buffer = [0; 16];
+        let mut footer_buffer = [0; 2 * USIZE_BYTES];
         if let Err(err) = file.read_exact(&mut footer_buffer) {
             print!("{}", err);
         };
         let footer = Footer {
-            index_offset: usize::from_le_bytes(footer_buffer[0..8].try_into().unwrap()),
-            index_size: usize::from_le_bytes(footer_buffer[8..16].try_into().unwrap()),
+            index_offset: usize::from_le_bytes(footer_buffer[0..USIZE_BYTES].try_into().unwrap()),
+            index_size: usize::from_le_bytes(
+                footer_buffer[USIZE_BYTES..2 * USIZE_BYTES]
+                    .try_into()
+                    .unwrap(),
+            ),
         };
 
         file.seek(SeekFrom::Start(footer.index_offset.try_into().unwrap()))?;
@@ -326,11 +286,11 @@ impl SSTable {
         let mut index_offset = 0;
         while index_offset < footer.index_size {
             let key_size = usize::from_le_bytes(
-                index_buffer[index_offset..index_offset + 8]
+                index_buffer[index_offset..index_offset + USIZE_BYTES]
                     .try_into()
                     .unwrap(),
             );
-            index_offset += 8;
+            index_offset += USIZE_BYTES;
             let key = String::from_utf8_lossy(
                 index_buffer[index_offset..index_offset + key_size]
                     .try_into()
@@ -340,18 +300,18 @@ impl SSTable {
             index_offset += key_size;
 
             let offset = usize::from_le_bytes(
-                index_buffer[index_offset..index_offset + 8]
+                index_buffer[index_offset..index_offset + USIZE_BYTES]
                     .try_into()
                     .unwrap(),
             );
-            index_offset += 8;
+            index_offset += USIZE_BYTES;
 
             let block_index = usize::from_le_bytes(
-                index_buffer[index_offset..index_offset + 8]
+                index_buffer[index_offset..index_offset + USIZE_BYTES]
                     .try_into()
                     .unwrap(),
             );
-            index_offset += 8;
+            index_offset += USIZE_BYTES;
 
             index_entries.push(IndexEntry {
                 key,
@@ -386,46 +346,40 @@ mod test {
     #[test]
     fn block_from_bytes() {
         let block = Block {
-            entries: vec![
-                Entry::new("a".to_owned(), "b".to_owned()),
-                Entry::new("aa".to_owned(), "bb".to_owned()),
+            records: vec![
+                Record::new("a".to_owned(), "b".to_owned()),
+                Record::new("aa".to_owned(), "bb".to_owned()),
             ],
         };
 
         let bytes = block.to_bytes();
 
         let new_block = Block::from_bytes(&bytes);
-        assert_eq!(block.entries, new_block.entries)
+        assert_eq!(block.records, new_block.records)
     }
 
     #[test]
     fn get_value_by_index() {
-        let entry_a = Entry::new("a".to_owned(), "aa".to_owned());
-        let entry_b = Entry::new("b".to_owned(), "bb".to_owned());
+        let entry_a = Record::new("a".to_owned(), "aa".to_owned());
+        let entry_b = Record::new("b".to_owned(), "bb".to_owned());
 
-        let mut bytes = vec![];
+        let mut records = vec![];
 
-        let mut block = Block { entries: vec![] };
         for i in 0..(BLOCKSIZE / size_of_val(&entry_a)) {
-            block.entries.push(Entry::new(
+            records.push(Record::new(
                 format!("{}{}", "a".to_owned(), i.to_string()),
                 format!("{}{}", "aa".to_owned(), i.to_string()),
             ));
         }
 
-        bytes.push(block);
-
-        let mut block = Block { entries: vec![] };
         for i in 0..(BLOCKSIZE / size_of_val(&entry_b)) {
-            block.entries.push(Entry::new(
+            records.push(Record::new(
                 format!("{}{}", "b".to_owned(), i.to_string()),
                 format!("{}{}", "bb".to_owned(), i.to_string()),
             ));
         }
 
-        bytes.push(block);
-
-        let new_sstable = SSTable::from_blocks(bytes);
+        let new_sstable = SSTable::from_records(records);
         assert_eq!(
             Some(&"bb1".to_owned()),
             new_sstable.get_value(&"b1".to_owned())
@@ -442,8 +396,7 @@ mod test {
             );
         }
 
-        let bytes = mem_table.to_bytes_padded();
-        let new_sstable = SSTable::from_bytes(&bytes);
+        let new_sstable = SSTable::from_records(mem_table.to_records());
         assert_eq!(
             Some(&"aa3000".to_owned()),
             new_sstable.get_value(&"a3000".to_owned())
@@ -460,8 +413,7 @@ mod test {
             );
         }
 
-        let bytes = mem_table.to_bytes_padded();
-        let new_sstable = SSTable::from_bytes(&bytes);
+        let new_sstable = SSTable::from_records(mem_table.to_records());
 
         let path = Path::new("./tests/sstable/output/get_from_disk");
         let ss_path = new_sstable.write(&path).unwrap();

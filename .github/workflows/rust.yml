@@ -16,12 +16,28 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+    
     - name: Build
       run: cargo build
+
     - name: Run tests
       run: cargo test
+
+    - uses: actions/checkout@v3
+      with:
+        ref: main
+        clean: false
+      
+    - name: Benchmark baseline
+      run: cargo bench --bench benchmark -- --save-baseline main
+    
+    - uses: actions/checkout@v3
+      with:
+        ref: ${{ github.ref }}
+        clean: false
+    
     - name: Benchmarks
-      run: cargo bench
+      run: cargo bench --bench benchmark -- --baseline main
 
     - name: Archive benchmark results
       uses: actions/upload-artifact@v3
