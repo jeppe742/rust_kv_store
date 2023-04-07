@@ -93,10 +93,8 @@ impl Block {
     pub fn to_bytes(&self) -> [u8; BLOCKSIZE] {
         let mut bytes: Vec<u8> = self.records.iter().flat_map(|r| r.as_bytes()).collect();
 
-        println!("len before = {}", bytes.len());
         // pad bytes with 0 to a fixed size of BLOCKSIZE
         bytes.resize(BLOCKSIZE, 0);
-        println!("len = {}", bytes.len());
 
         bytes.try_into().unwrap()
     }
