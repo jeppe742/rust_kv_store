@@ -44,6 +44,10 @@ impl Block {
             if offset + USIZE_BYTES >= BLOCKSIZE {
                 break;
             }
+
+            let is_tombstone = bytes[offset..offset + 1][0];
+            offset += 1;
+
             let key_size =
                 usize::from_le_bytes(bytes[offset..offset + USIZE_BYTES].try_into().unwrap());
             offset += USIZE_BYTES;
@@ -53,9 +57,6 @@ impl Block {
             if key_size == 0 {
                 break;
             }
-            let value_size =
-                usize::from_le_bytes(bytes[offset..offset + USIZE_BYTES].try_into().unwrap());
-            offset += USIZE_BYTES;
 
             let timestamp =
                 u128::from_le_bytes(bytes[offset..offset + U128_BYTES].try_into().unwrap());
@@ -64,14 +65,26 @@ impl Block {
             let key = String::from_utf8_lossy(&bytes[offset..offset + key_size]).into_owned();
             offset += key_size;
 
-            let value = String::from_utf8_lossy(&bytes[offset..offset + value_size]).into_owned();
-            offset += value_size;
+            let entry = match is_tombstone {
+                1 => Record::Tombstone { timestamp, key },
+                0 => {
+                    let value_size = usize::from_le_bytes(
+                        bytes[offset..offset + USIZE_BYTES].try_into().unwrap(),
+                    );
+                    offset += USIZE_BYTES;
 
-            let entry = Record {
-                timestamp,
-                key,
-                value,
+                    let value =
+                        String::from_utf8_lossy(&bytes[offset..offset + value_size]).into_owned();
+                    offset += value_size;
+                    Record::Value {
+                        timestamp,
+                        key,
+                        value,
+                    }
+                }
+                _ => unreachable!(),
             };
+
             entries.push(entry);
         }
         Block { records: entries }
@@ -80,25 +93,25 @@ impl Block {
     pub fn to_bytes(&self) -> [u8; BLOCKSIZE] {
         let mut bytes: Vec<u8> = self.records.iter().flat_map(|r| r.as_bytes()).collect();
 
+        println!("len before = {}", bytes.len());
         // pad bytes with 0 to a fixed size of BLOCKSIZE
         bytes.resize(BLOCKSIZE, 0);
+        println!("len = {}", bytes.len());
 
         bytes.try_into().unwrap()
     }
 
-    pub fn get_value(&self, key: &String) -> Option<&String> {
-        let i = self.records.binary_search_by_key(&key, |e| &e.key);
-        match i {
-            Ok(idx) => Some(&self.records.get(idx).unwrap().value),
-            Err(_) => None,
-        }
-    }
+    pub fn get_value(&self, key: &String) -> Option<String> {
+        let i = self.records.binary_search_by_key(key, |e| e.get_key());
+        if let Ok(idx) = i {
+            match &self.records.get(idx) {
+                Some(Record::Value { value, .. }) => Some(value.clone()),
+                Some(Record::Tombstone { .. }) => None,
 
-    pub fn get_value_cloned(&self, key: &String) -> Option<String> {
-        let i = self.records.binary_search_by_key(&key, |e| &e.key);
-        match i {
-            Ok(idx) => Some(self.records.get(idx).unwrap().value.clone()),
-            Err(_) => None,
+                None => None,
+            }
+        } else {
+            None
         }
     }
 }
@@ -164,7 +177,7 @@ pub struct SSTable {
 }
 
 impl SSTable {
-    pub fn get_value(&self, key: &String) -> Option<&String> {
+    pub fn get_value(&self, key: &String) -> Option<String> {
         let block_idx = self.index_block.get_block_index(key);
         self.data_blocks.get(block_idx).unwrap().get_value(key)
     }
@@ -178,7 +191,7 @@ impl SSTable {
 
         for record in records {
             if offset + record.size() > BLOCKSIZE {
-                let min_key = block_records.get(0).unwrap().key.to_string();
+                let min_key = block_records.get(0).unwrap().get_key();
                 index_block.entries.push(IndexEntry {
                     key: min_key,
                     offset: BLOCKSIZE * current_block,
@@ -199,7 +212,7 @@ impl SSTable {
 
         // dump remaining records into block, with index
         if !block_records.is_empty() {
-            let min_key = block_records.get(0).unwrap().key.to_string();
+            let min_key = block_records.get(0).unwrap().get_key();
             index_block.entries.push(IndexEntry {
                 key: min_key,
                 offset: BLOCKSIZE * current_block,
@@ -332,7 +345,7 @@ impl SSTable {
 
         let block = Block::from_bytes(&block_buffer);
         // TODO: Result<Option<>> is kind of ugly
-        Ok(block.get_value_cloned(input_key))
+        Ok(block.get_value(input_key))
     }
 }
 
@@ -367,21 +380,21 @@ mod test {
 
         for i in 0..(BLOCKSIZE / size_of_val(&entry_a)) {
             records.push(Record::new(
-                format!("{}{}", "a".to_owned(), i.to_string()),
-                format!("{}{}", "aa".to_owned(), i.to_string()),
+                format!("{}{}", "a".to_owned(), i),
+                format!("{}{}", "aa".to_owned(), i),
             ));
         }
 
         for i in 0..(BLOCKSIZE / size_of_val(&entry_b)) {
             records.push(Record::new(
-                format!("{}{}", "b".to_owned(), i.to_string()),
-                format!("{}{}", "bb".to_owned(), i.to_string()),
+                format!("{}{}", "b".to_owned(), i),
+                format!("{}{}", "bb".to_owned(), i),
             ));
         }
 
         let new_sstable = SSTable::from_records(records);
         assert_eq!(
-            Some(&"bb1".to_owned()),
+            Some("bb1".to_owned()),
             new_sstable.get_value(&"b1".to_owned())
         )
     }
@@ -391,14 +404,14 @@ mod test {
         let mut mem_table = MemTable::new();
         for i in 0..(BLOCKSIZE / 4) {
             mem_table.set(
-                format!("{}{}", "a".to_owned(), i.to_string()),
-                format!("{}{}", "aa".to_owned(), i.to_string()),
+                format!("{}{}", "a".to_owned(), i),
+                format!("{}{}", "aa".to_owned(), i),
             );
         }
 
         let new_sstable = SSTable::from_records(mem_table.to_records());
         assert_eq!(
-            Some(&"aa3000".to_owned()),
+            Some("aa3000".to_owned()),
             new_sstable.get_value(&"a3000".to_owned())
         );
     }
@@ -408,15 +421,15 @@ mod test {
         let mut mem_table = MemTable::new();
         for i in 0..(BLOCKSIZE / 5) {
             mem_table.set(
-                format!("{}{}", "a".to_owned(), i.to_string()),
-                format!("{}{}", "aa".to_owned(), i.to_string()),
+                format!("{}{}", "a".to_owned(), i),
+                format!("{}{}", "aa".to_owned(), i),
             );
         }
 
         let new_sstable = SSTable::from_records(mem_table.to_records());
 
         let path = Path::new("./tests/sstable/output/get_from_disk");
-        let ss_path = new_sstable.write(&path).unwrap();
+        let ss_path = new_sstable.write(path).unwrap();
         assert_eq!(
             SSTable::get_disk(&"a3000".to_owned(), &ss_path).unwrap(),
             Some("aa3000".to_owned())

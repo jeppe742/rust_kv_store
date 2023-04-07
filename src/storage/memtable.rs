@@ -1,67 +1,53 @@
 #![allow(dead_code)]
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use rbtree::RBTree;
+use std::collections::BTreeMap;
 
 use super::record::Record;
 
-pub struct MemTable<K: Ord, V> {
-    _storage: RBTree<K, V>,
+pub struct MemTable {
+    _storage: BTreeMap<String, Record>,
 }
 
-impl<K: Ord, V: Clone> MemTable<K, V> {
-    pub fn new() -> MemTable<K, V> {
+impl Default for MemTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MemTable {
+    pub fn new() -> MemTable {
         MemTable {
-            _storage: RBTree::new(),
+            _storage: BTreeMap::new(),
         }
     }
 
-    pub fn set(&mut self, key: K, value: V) {
-        self._storage.insert(key, value);
+    pub fn set(&mut self, key: String, value: String) {
+        self._storage.insert(key.clone(), Record::new(key, value));
     }
 
-    pub fn get(&self, key: &K) -> Option<V> {
+    pub fn get(&self, key: &String) -> Option<String> {
         match self._storage.get(key) {
             None => None,
-            Some(value) => Some(value.to_owned()),
+            Some(Record::Value { value, .. }) => Some(value.to_string()),
+            Some(Record::Tombstone { .. }) => None,
         }
+    }
+
+    pub fn delete(&mut self, key: String) {
+        self._storage
+            .insert(key.clone(), Record::new_tombstone(key));
     }
 
     pub fn len(&self) -> usize {
         self._storage.len()
     }
-}
-const BLOCKSIZE: usize = 32000;
-impl MemTable<String, String> {
-    pub fn to_bytes_padded(&self) -> Vec<u8> {
-        let mut bytes = vec![];
-        let mut buffer_size = 0;
-        for (key, value) in self._storage.iter() {
-            if buffer_size + key.len() + value.len() + 2 * 8 + 16 > BLOCKSIZE {
-                let padding = vec![0; BLOCKSIZE - buffer_size];
-                bytes.extend(padding);
-                buffer_size = 0;
-            }
 
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            bytes.extend(key.len().to_le_bytes().to_vec());
-            bytes.extend(value.len().to_le_bytes().to_vec());
-            bytes.extend(timestamp.to_le_bytes().to_vec());
-            bytes.extend(key.as_bytes().to_vec());
-            bytes.extend(value.as_bytes().to_vec());
-
-            buffer_size += key.len() + value.len() + 2 * 8 + 16;
-        }
-        bytes
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
+
     pub fn to_records(&self) -> Vec<Record> {
-        self._storage
-            .iter()
-            .map(|(k, v)| Record::new(k.to_string(), v.to_string()))
-            .collect()
+        self._storage.values().map(|v| (*v).clone()).collect()
     }
 }
 
@@ -70,30 +56,26 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_get_int() {
+    fn test_get() {
         let mut mem_table = MemTable::new();
-        mem_table.set(1, 1);
-        assert_eq!(mem_table.get(&1), Some(1));
+        mem_table.set("a".to_string(), "a".to_string());
+        assert_eq!(mem_table.get(&"a".to_string()), Some("a".to_string()));
     }
 
     #[test]
-    fn test_get_int_none() {
+    fn test_get_none() {
         let mut mem_table = MemTable::new();
-        mem_table.set(1, 1);
-        assert_eq!(mem_table.get(&2), None);
+        mem_table.set("a".to_string(), "a".to_string());
+        assert_eq!(mem_table.get(&"b".to_string()), None);
     }
 
     #[test]
-    fn test_get_str() {
+    fn test_delete() {
         let mut mem_table = MemTable::new();
-        mem_table.set("a", "a");
-        assert_eq!(mem_table.get(&"a"), Some("a"));
-    }
+        mem_table.set("a".to_string(), "a".to_string());
+        assert_eq!(mem_table.get(&"a".to_string()), Some("a".to_string()));
 
-    #[test]
-    fn test_get_str_none() {
-        let mut mem_table = MemTable::new();
-        mem_table.set("a", "a");
-        assert_eq!(mem_table.get(&"b"), None);
+        mem_table.delete("a".to_string());
+        assert_eq!(mem_table.get(&"a".to_string()), None);
     }
 }

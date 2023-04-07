@@ -35,7 +35,7 @@ impl WriteAheadLog {
     }
 
     pub fn from_file(path: &Path) -> io::Result<WriteAheadLog> {
-        let file = OpenOptions::new().append(true).open(&path)?;
+        let file = OpenOptions::new().append(true).open(path)?;
         let buf_writer = BufWriter::new(file);
 
         Ok(WriteAheadLog {
@@ -51,10 +51,20 @@ impl WriteAheadLog {
         Ok(())
     }
 
-    pub fn into_memtable(self) -> MemTable<String, String> {
+    pub fn delete(&mut self, key: String) -> io::Result<()> {
+        let entry = Record::new_tombstone(key);
+        self.buf_writer.write_all(&entry.as_bytes()).unwrap();
+        self.buf_writer.flush().unwrap();
+        Ok(())
+    }
+
+    pub fn into_memtable(self) -> MemTable {
         let mut mem_table = MemTable::new();
         for wal_entry in self.into_iter() {
-            mem_table.set(wal_entry.key, wal_entry.value)
+            match wal_entry {
+                Record::Tombstone { .. } => {}
+                Record::Value { key, value, .. } => mem_table.set(key, value),
+            }
         }
 
         mem_table
@@ -104,9 +114,15 @@ mod test {
         wal.set("a".to_owned(), "b".to_owned()).unwrap();
 
         let mut wal_iter = wal.into_iter();
-        let read_entry = wal_iter.next().unwrap();
-        assert_eq!(read_entry.key, "a");
-        assert_eq!(read_entry.value, "b");
+        match wal_iter.next() {
+            Some(Record::Value { key, value, .. }) => {
+                assert_eq!(key, "a");
+                assert_eq!(value, "b");
+            }
+            // tombstones should be ignored
+            Some(Record::Tombstone { .. }) => {}
+            None => panic!("wal entry was not read correctly"),
+        }
 
         assert!(wal_iter.next().is_none());
     }
