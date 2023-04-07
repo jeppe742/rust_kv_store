@@ -33,7 +33,7 @@ jobs:
         ref: ${{ github.ref }}
     
     - name: Benchmarks
-      run: cargo bench --bench benchmark --baseline main
+      run: cargo bench --bench benchmark -- --baseline main
 
     - name: Archive benchmark results
       uses: actions/upload-artifact@v3
