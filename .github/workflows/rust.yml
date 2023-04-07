@@ -26,14 +26,14 @@ jobs:
         ref: main
       
     - name: Benchmark baseline
-      run: cargo bench -- --save-baseline main
+      run: cargo bench --bench benchmark -- --save-baseline main
     
     - uses: actions/checkout@v3
       with:
         ref: ${{ github.ref }}
     
     - name: Benchmarks
-      run: cargo bench --baseline main
+      run: cargo bench --bench benchmark --baseline main
 
     - name: Archive benchmark results
       uses: actions/upload-artifact@v3
