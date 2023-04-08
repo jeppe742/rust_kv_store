@@ -60,15 +60,19 @@ impl DB {
             return Some(v);
         }
 
-        for ss_table in glob(self.sstable_path.join("*.ss").to_str().unwrap())
+        for ss_table_path in glob(self.sstable_path.join("*.ss").to_str().unwrap())
             .unwrap()
             .filter_map(Result::ok)
             .collect::<Vec<PathBuf>>()
             .into_iter()
             .rev()
         {
-            if let Ok(Some(v)) = SSTable::get_disk(key, &ss_table) {
-                return Some(v);
+            if let Some(value) = SSTable::from_disk(&ss_table_path)
+                .unwrap_or_default()
+                .get(&ss_table_path, key)
+                .unwrap()
+            {
+                return Some(value);
             }
         }
 

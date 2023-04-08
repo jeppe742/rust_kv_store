@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 /*
 
-```
 <beginning_of_file>
 [data block 1]
 [data block 2]
@@ -17,8 +16,8 @@
 [metaindex block]
 [Footer]                               (fixed size; starts at file_size - sizeof(Footer))
 <end_of_file>
-```
- */
+
+*/
 
 use std::{
     fs::{create_dir_all, File, OpenOptions},
@@ -119,6 +118,7 @@ struct IndexEntry {
     offset: usize,
     block_index: usize,
 }
+#[derive(Default)]
 struct IndexBlock {
     entries: Vec<IndexEntry>,
 }
@@ -154,6 +154,7 @@ impl IndexBlock {
     }
 }
 
+#[derive(Default)]
 struct Footer {
     index_offset: usize,
     index_size: usize,
@@ -168,10 +169,12 @@ impl Footer {
     }
 }
 
+#[derive(Default)]
 pub struct SSTable {
     data_blocks: Vec<Block>,
     index_block: IndexBlock,
     footer: Footer,
+    level: u8,
 }
 
 impl SSTable {
@@ -236,6 +239,7 @@ impl SSTable {
             data_blocks,
             index_block,
             footer,
+            level: 0,
         }
     }
 
@@ -256,7 +260,8 @@ impl SSTable {
             .unwrap()
             .as_micros();
         create_dir_all(path)?;
-        let path = Path::new(path).join(timestamp.to_string() + ".ss");
+        let path =
+            Path::new(path).join(timestamp.to_string() + "_" + &self.level.to_string() + ".ss");
 
         let file = OpenOptions::new()
             .create(true)
@@ -268,10 +273,22 @@ impl SSTable {
         Ok(path)
     }
 
-    pub fn get_disk(
-        input_key: &String,
-        file_path: &Path,
-    ) -> Result<Option<String>, std::io::Error> {
+    /// Returns a `SSTable` with the footer and index populated.
+    /// This will not load any data blocks, will is done when querying
+    pub fn from_disk(file_path: &Path) -> Result<SSTable, std::io::Error> {
+        // filename is <timestamp>_<level>.ss
+        // Unfortunately it's extremely ugly to extract the level this way
+        let level: u8 = file_path
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .split_once('_')
+            .unwrap()
+            .1
+            .parse()
+            .unwrap();
+
         let mut file = File::open(file_path).unwrap();
         file.seek(SeekFrom::End(-(2 * USIZE_BYTES as i64))).unwrap();
 
@@ -335,7 +352,22 @@ impl SSTable {
             entries: index_entries,
         };
 
-        let block_offset = index_block.get_block_offset(input_key);
+        Ok(SSTable {
+            data_blocks: vec![],
+            index_block,
+            footer,
+            level,
+        })
+    }
+
+    pub fn get(
+        &self,
+        file_path: &Path,
+        input_key: &String,
+    ) -> Result<Option<String>, std::io::Error> {
+        let block_offset = self.index_block.get_block_offset(input_key);
+
+        let mut file = File::open(file_path).unwrap();
 
         let mut block_buffer = [0; BLOCKSIZE];
         file.seek(SeekFrom::Start(block_offset.try_into().unwrap()))?;
@@ -428,13 +460,15 @@ mod test {
 
         let path = Path::new("./tests/sstable/output/get_from_disk");
         let ss_path = new_sstable.write(path).unwrap();
+
+        let ss_table = SSTable::from_disk(&ss_path).unwrap();
         assert_eq!(
-            SSTable::get_disk(&"a3000".to_owned(), &ss_path).unwrap(),
+            ss_table.get(&ss_path, &"a3000".to_owned()).unwrap(),
             Some("aa3000".to_owned())
         );
 
         assert_eq!(
-            SSTable::get_disk(&"a4001".to_owned(), &ss_path).unwrap(),
+            ss_table.get(&ss_path, &"a4001".to_owned()).unwrap(),
             Some("aa4001".to_owned())
         );
         remove_dir_all(path).unwrap();
