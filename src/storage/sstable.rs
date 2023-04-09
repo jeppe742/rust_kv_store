@@ -274,7 +274,7 @@ impl SSTable {
     }
 
     /// Returns a `SSTable` with the footer and index populated.
-    /// This will not load any data blocks, will is done when querying
+    /// This will not load any data blocks, as this is done when querying
     pub fn from_disk(file_path: &Path) -> Result<SSTable, std::io::Error> {
         // filename is <timestamp>_<level>.ss
         // Unfortunately it's extremely ugly to extract the level this way

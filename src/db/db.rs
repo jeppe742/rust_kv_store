@@ -8,6 +8,7 @@ use crate::storage::sstable::SSTable;
 use crate::storage::wal::WriteAheadLog;
 
 use glob::{glob, GlobResult};
+use itertools::Itertools;
 
 #[derive(Hash, PartialEq, Eq)]
 enum DBConfig {
@@ -18,6 +19,7 @@ pub struct DB {
     wal: WriteAheadLog,
     mem_table: MemTable,
     sstable_path: PathBuf,
+    sstables: Vec<PathBuf>,
     wal_path: PathBuf,
     config: HashMap<DBConfig, usize>,
 }
@@ -27,11 +29,18 @@ impl DB {
         let wal = WriteAheadLog::new(&path.join("wal")).unwrap();
         let mem_table = MemTable::new();
 
+        let sstables: Vec<PathBuf> = glob(path.join("sstable").join("*.ss").to_str().unwrap())
+            .unwrap()
+            .flat_map(|p| p.ok())
+            .sorted()
+            .collect();
+
         DB {
             root_path: path.to_path_buf(),
             wal,
             mem_table,
             sstable_path: path.join("sstable"),
+            sstables,
             wal_path: path.join("wal"),
             config: vec![(DBConfig::MemtableSize, 128_000)]
                 .into_iter()
@@ -60,16 +69,10 @@ impl DB {
             return Some(v);
         }
 
-        for ss_table_path in glob(self.sstable_path.join("*.ss").to_str().unwrap())
-            .unwrap()
-            .filter_map(Result::ok)
-            .collect::<Vec<PathBuf>>()
-            .into_iter()
-            .rev()
-        {
-            if let Some(value) = SSTable::from_disk(&ss_table_path)
+        for ss_table_path in self.sstables.iter().rev() {
+            if let Some(value) = SSTable::from_disk(ss_table_path)
                 .unwrap_or_default()
-                .get(&ss_table_path, key)
+                .get(ss_table_path, key)
                 .unwrap()
             {
                 return Some(value);
@@ -91,7 +94,9 @@ impl DB {
         if self.mem_table.len() == *self.config.get(&DBConfig::MemtableSize).unwrap() {
             let new_sstable = SSTable::from_records(self.mem_table.to_records());
 
-            new_sstable.write(&self.sstable_path).unwrap();
+            let new_sstable_path = new_sstable.write(&self.sstable_path).unwrap();
+
+            self.sstables.push(new_sstable_path);
 
             self.mem_table = MemTable::new();
             self.wal = WriteAheadLog::new(&self.root_path.join("wal")).unwrap();

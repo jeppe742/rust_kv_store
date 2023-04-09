@@ -465,6 +465,7 @@ dependencies = [
  "crc32fast",
  "criterion",
  "glob",
+ "itertools",
  "rand",
 ]
 
