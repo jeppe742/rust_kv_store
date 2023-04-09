@@ -174,7 +174,7 @@ pub struct SSTable {
     data_blocks: Vec<Block>,
     index_block: IndexBlock,
     footer: Footer,
-    level: u8,
+    pub level: u8,
 }
 
 impl SSTable {
@@ -360,6 +360,21 @@ impl SSTable {
         })
     }
 
+    pub fn load_from_disk(&mut self, file_path: &Path) -> Result<(), std::io::Error> {
+        let mut file = File::open(file_path).unwrap();
+
+        for _block in 0..self.footer.index_offset / BLOCKSIZE {
+            let mut block_buffer = [0; BLOCKSIZE];
+
+            file.read_exact(&mut block_buffer)?;
+
+            let block = Block::from_bytes(&block_buffer);
+            self.data_blocks.push(block);
+        }
+
+        Ok(())
+    }
+
     pub fn get(
         &self,
         file_path: &Path,
@@ -376,6 +391,40 @@ impl SSTable {
         let block = Block::from_bytes(&block_buffer);
         // TODO: Result<Option<>> is kind of ugly
         Ok(block.get_value(input_key))
+    }
+}
+
+pub struct SSTableIter {
+    records: Vec<Record>,
+    current_index: usize,
+}
+
+impl IntoIterator for SSTable {
+    type Item = Record;
+
+    type IntoIter = SSTableIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        SSTableIter {
+            records: self
+                .data_blocks
+                .iter()
+                .flat_map(|b| b.records.clone())
+                .collect(),
+            current_index: 0,
+        }
+    }
+}
+
+impl Iterator for SSTableIter {
+    type Item = Record;
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(record) = self.records.get(self.current_index) {
+            self.current_index += 1;
+            Some(record.clone())
+        } else {
+            None
+        }
     }
 }
 
